@@ -842,6 +842,7 @@ async function configurePage(page) {
     await page.setJavaScriptEnabled(true);
     await page.setUserAgent('Mozilla/5.0 (Windows NT 5.1; rv:5.0) Gecko/20100101 Firefox/5.0');
     await page.setExtraHTTPHeaders({'accept-language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'});
+    await page.setDefaultNavigationTimeout(0);
 }
 
 async function loadCookies(filename, page) {
