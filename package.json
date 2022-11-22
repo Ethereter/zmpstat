@@ -1,0 +1,24 @@
+{
+  "name": "zmpstat",
+  "engines": {
+    "node": "18.4.0"
+  },
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "dependencies": {
+    "big-json": "^3.2.0",
+    "cheerio": "^1.0.0-rc.12",
+    "express": "^4.18.1",
+    "JSONStream": "^1.3.5",
+    "puppeteer": "^16.2.0",
+    "puppeteer-extra": "^3.3.4",
+    "puppeteer-extra-plugin-stealth": "^2.11.1"
+  },
+  "scripts": {
+    "start": "node app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
