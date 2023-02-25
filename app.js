@@ -6,9 +6,12 @@ const puppeteer = require('puppeteer-extra');
 const cheerio = require('cheerio');
 const port = process.env.PORT || 8080;
 const path = require('path');
+const moment = require('moment');
 //const jsonStream = require('JSONStream');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
+
+const HttpsProxyAgent = require('https-proxy-agent');
 
 
 const downloadPath = path.resolve('./download');
@@ -23,6 +26,10 @@ app.get('/', async function (req, res) {
 
         const browser = await puppeteer.launch({
             headless: true,
+            defaultViewport: {
+                width: 1690,
+                height: 800,
+            },
             args: ['--no-sandbox', '--disable-setuid-sandbox',
                 '--disable-web-security',
                 '--disable-features=IsolateOrigins',
@@ -36,15 +43,51 @@ app.get('/', async function (req, res) {
                 waitUntil: 'domcontentloaded',
             });
 
-            await page.waitForSelector('.j-card-item');
+            await page.waitForSelector('div[data-nm-id]');
 
-            let skus = await page.evaluate(() => {
-                let result = Array.from(document.body.querySelectorAll('.j-card-item'), (el, i) => `[${i + 1}, ${el.dataset.popupNmId}]`)
-                    .slice(0, 100).join();
-                return `[${result}]`;
-            });
+            console.log("loaded");
 
-            res.send(skus);
+            const html = await page.evaluate(() => document.body.innerHTML);
+            let $ = cheerio.load(html);
+
+            const selector = `div[data-nm-id]:not(.advert-card-item)`;
+
+            let cardsAmount = $(selector).length;
+
+            let tries = 50;
+            let triesBeforeBreak = 5;
+
+            do {
+                console.log(`scrolling (${cardsAmount})`);
+                await page.evaluate(async () => {
+                    window.scrollBy(0, window.innerHeight);
+                });
+
+                await page.waitForNetworkIdle({ idleTime: 400, timeout: 10000 });
+
+                $ = cheerio.load(await page.evaluate(() => document.body.innerHTML));
+
+                if($(selector).length === cardsAmount) {
+                    triesBeforeBreak--;
+                }else {
+                    triesBeforeBreak = 5;
+                }
+
+                cardsAmount = $(selector).length;
+
+                if(triesBeforeBreak <= 0) {
+                   break;
+                }
+
+            } while(cardsAmount < 100 && tries--);
+
+            if(!tries) throw "timeout";
+
+            let skus = $(selector).map((i,v) => v.attribs["data-nm-id"])
+                .get()
+                .map((v,i) => [i + 1, v]);
+
+            res.send(JSON.stringify(skus));
         } catch (e) {
             console.log(e.message);
             res.send("Something went wrong");
@@ -106,6 +149,8 @@ app.get('/wb/rating/:sku', async function (req, res) {
             "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12
         };
 
+        let retries = 5;
+
         while (true) {
             data.feedbacks = [];
 
@@ -116,20 +161,21 @@ app.get('/wb/rating/:sku', async function (req, res) {
                 }));
 
             data.feedbacks = data.feedbacks.map(v => {
-                let dateSplit = v.date.split(/\s/).filter(v => v);
+                let dateSplit = v.date.split(/\s|,/).filter(v => v);
                 let feedbackDate;
 
                 if (dateSplit.length === 2) {
                     let curDate = new Date();
-                    if (dateSplit[0] === "Сегодня,") {
+                    if (/сегодня/gi.test(dateSplit[0])) {
                         feedbackDate = `${curDate.getDate()}.${`${curDate.getMonth() + 1}`.padStart(2, '0')}.${curDate.getFullYear()}`;
-                    } else if (dateSplit[0] === "Вчера,") {
+                    } else if (/вчера/gi.test(dateSplit[0])) {
                         let yesterday = curDate;
                         yesterday.setDate(yesterday.getDate() - 1);
                         feedbackDate = `${yesterday.getDate()}.${`${curDate.getMonth() + 1}`.padStart(2, '0')}.${yesterday.getFullYear()}`;
                     }
                 } else {
-                    feedbackDate = `${dateSplit[0]}.${`${months[dateSplit[1].replace(",", "")]}`.padStart(2, '0')}.${new Date().getFullYear()}`;
+                    feedbackDate =
+                        `${dateSplit[0]}.${`${months[dateSplit[1].replace(",", "")]}`.padStart(2, '0')}.${dateSplit[2].includes(":") ? new Date().getFullYear() : dateSplit[2]}`;
                 }
 
                 const parts = feedbackDate.split('.');
@@ -149,19 +195,31 @@ app.get('/wb/rating/:sku', async function (req, res) {
 
             if (isPrevDayReached)
                 break;
+
             console.log("scrolling");
             await page.evaluate(async () => {
                 window.scrollBy(0, 5000);
             });
 
-            await sleep(2000);
+            //await sleep(2000);
+            await page.waitForNetworkIdle({ idleTime: 200, timeout: 10000 });
 
             $ = cheerio.load(await page.evaluate(() => document.body.innerHTML));
 
-            if ($(`div.feedback__info`).length === feedbacksCount) {
-                break;
+            if ($(`div.feedback__info`).length === feedbacksCount && retries--) {
+                console.log("rescroll");
+                continue;
             }
+
+            if(retries <= 0)
+                break;
+            else retries = 5;
         }
+
+        /*data.feedbacks = data.feedbacks.filter(f => {
+            let date = moment(f.date, "DD.MM.YYYY");
+            return date.diff(moment(dayBefore), 'days') > 0;
+        })*/
 
         res.send(JSON.stringify(data));
         console.log("response sent");
@@ -405,7 +463,7 @@ app.post('/mpstats/api-get/', jsonParser, async function (req, res) {
         });
 
         let result = await response.text();
-        console.log(`Response recieved`);
+        console.log(`Response sent`);
 
         res.send(result);
     } catch (e) {
@@ -443,13 +501,13 @@ app.post('/mpstats/api-get/keywords-multiple', jsonParser, async function (req, 
         let data = await Promise.all(json);
 
         /*let stream = jsonStream.stringify();
-        
+
         stream.pipe(res);
-        
+
         stream.write(data.map(v => {
             return {words: v.words};
         }));
-        
+
         stream.end();
         */
 
@@ -481,8 +539,40 @@ app.post('/mpstats/api/', jsonParser, async function (req, res) {
         });
 
         let result = await response.text();
-        console.log(`Response recieved`);
+        console.log(`Response sent`);
 
+        res.send(result);
+    } catch (e) {
+        console.log(e.message)
+        res.send('Something went wrong');
+    }
+});
+
+app.post('/fetch', jsonParser,  async function (req, res) {
+    try {
+        const proxyUrl = 'https://82.202.162.8:9999';
+        const agent = new HttpsProxyAgent(proxyUrl);
+
+        if (!req.body) return res.sendStatus(400)
+
+        console.log(JSON.stringify(req.body));
+        console.log(req.body.url);
+
+        let init = {
+            method: req.body.method,
+            headers: req.body.headers,
+            agent: agent
+        }
+
+        if(req.body.method?.toString().toLowerCase() !== "get") {
+            init.body = JSON.stringify(req.body.data);
+        }
+
+        let response = await fetch(req.body.url, init);
+
+        let result = await response.text();
+
+        console.log(`Response by fetching ${req.body.url} sent`);
         res.send(result);
     } catch (e) {
         console.log(e.message)
@@ -661,6 +751,10 @@ app.get('/mpstats', async function (req, res) {
                 waitUntil: 'domcontentloaded',
             });
 
+            console.log("Wait");
+            await sleep(3000);
+            console.log("Wait done");
+
             console.log("Evaluating first..");
             let body = await page.evaluate(() => document.body.innerHTML);
             let $ = cheerio.load(body);
@@ -682,6 +776,10 @@ app.get('/mpstats', async function (req, res) {
                 await page.goto(url, {
                     waitUntil: 'domcontentloaded',
                 });
+
+                console.log("Wait");
+                await sleep(3000);
+                console.log("Wait done");
 
                 console.log("Evaluating card page..");
                 body = await page.evaluate(() => document.body.innerHTML);
@@ -725,7 +823,7 @@ app.get('/mpstats', async function (req, res) {
             if (!$('div.card').length) {
                 console.log('Something went wrong (no div.card)')
                 res.send('Something went wrong');
-                //res.send($.html());    
+                //res.send($.html());
                 if (browser)
                     await browser.close();
                 console.log('Browser closed');
@@ -735,7 +833,7 @@ app.get('/mpstats', async function (req, res) {
             let data = parseMpstats($);
             let result = JSON.stringify(data);
 
-            //res.send($.html());      
+            //res.send($.html());
             console.log(result);
             res.send(result);
 
@@ -776,7 +874,7 @@ async function logginMpstats(page, body, $) {
     body = await page.evaluate(() => document.body.innerHTML);
     $ = cheerio.load(body);
 
-    return !!$('span.user-name').length;
+    return !!$('a.logout').length;
 }
 
 function parseMpstats($) {
@@ -842,7 +940,6 @@ async function configurePage(page) {
     await page.setJavaScriptEnabled(true);
     await page.setUserAgent('Mozilla/5.0 (Windows NT 5.1; rv:5.0) Gecko/20100101 Firefox/5.0');
     await page.setExtraHTTPHeaders({'accept-language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'});
-    await page.setDefaultNavigationTimeout(0);
 }
 
 async function loadCookies(filename, page) {
