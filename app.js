@@ -11,8 +11,6 @@ const moment = require('moment');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 
-const HttpsProxyAgent = require('https-proxy-agent');
-
 
 const downloadPath = path.resolve('./download');
 const mpstatsCookies = 'mpstats-cookies.json';
@@ -550,9 +548,6 @@ app.post('/mpstats/api/', jsonParser, async function (req, res) {
 
 app.post('/fetch', jsonParser,  async function (req, res) {
     try {
-        const proxyUrl = 'https://82.202.162.8:9999';
-        const agent = new HttpsProxyAgent(proxyUrl);
-
         if (!req.body) return res.sendStatus(400)
 
         console.log(JSON.stringify(req.body));
@@ -561,7 +556,6 @@ app.post('/fetch', jsonParser,  async function (req, res) {
         let init = {
             method: req.body.method,
             headers: req.body.headers,
-            agent: agent
         }
 
         if(req.body.method?.toString().toLowerCase() !== "get") {
