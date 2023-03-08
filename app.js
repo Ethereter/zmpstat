@@ -1,5 +1,6 @@
 const express = require('express');
 const jsonParser = express.json();
+const morgan = require('morgan');
 const fs = require('fs');
 const app = express();
 const puppeteer = require('puppeteer-extra');
@@ -15,12 +16,19 @@ puppeteer.use(StealthPlugin());
 const downloadPath = path.resolve('./download');
 const mpstatsCookies = 'mpstats-cookies.json';
 
+const accessLogStream = fs.createWriteStream(path.join(__dirname, 'access.log'), { flags: 'a' });
+const processLogStream = fs.createWriteStream(path.join(__dirname, 'process.log'), { flags: 'a' });
+
+// use morgan middleware to log requests
+app.use(morgan('combined', { stream: accessLogStream }));
+
 app.get('/', async function (req, res) {
-    console.log(req.query)
+    logMsg(`GET ${req.url}`);
+    logMsg(req.query);
 
     if (req.query.wbQuery) {
         let url = `https://www.wildberries.ru/catalog/0/search.aspx?sort=popular&search=${encodeURIComponent(req.query.wbQuery)}`;
-        console.log(`url: ${url}`)
+        logMsg(`url: ${url}`)
 
         const browser = await puppeteer.launch({
             headless: true,
@@ -43,7 +51,7 @@ app.get('/', async function (req, res) {
 
             await page.waitForSelector('div[data-nm-id]');
 
-            console.log("loaded");
+            logMsg("loaded");
 
             const html = await page.evaluate(() => document.body.innerHTML);
             let $ = cheerio.load(html);
@@ -56,7 +64,7 @@ app.get('/', async function (req, res) {
             let triesBeforeBreak = 5;
 
             do {
-                console.log(`scrolling (${cardsAmount})`);
+                logMsg(`scrolling (${cardsAmount})`);
                 await page.evaluate(async () => {
                     window.scrollBy(0, window.innerHeight);
                 });
@@ -87,7 +95,7 @@ app.get('/', async function (req, res) {
 
             res.send(JSON.stringify(skus));
         } catch (e) {
-            console.log(e.message);
+            logMsg(e.message);
             res.send("Something went wrong");
         }
 
@@ -97,7 +105,8 @@ app.get('/', async function (req, res) {
 
 
 app.get('/wb/rating/:sku', async function (req, res) {
-    console.log(req.query);
+    logMsg(`GET ${req.url}`);
+    logMsg(req.query);
 
     const dateParts = req.query.d.split('-');
 
@@ -106,19 +115,19 @@ app.get('/wb/rating/:sku', async function (req, res) {
     dayBefore.setDate(dayBefore.getDate() - 1);
 
     const url = `https://www.wildberries.ru/catalog/${req.params.sku}/feedbacks`;
-    console.log(`url: ${url}`)
+    logMsg(`url: ${url}`)
 
     const browser = await newBrowserLaunch(!req.query.hl);
     const page = (await browser.pages())[0];
     await configurePage(page);
 
     try {
-        console.log("going to url");
+        logMsg("going to url");
         await page.goto(url, {waitUntil: 'networkidle2'});
-        console.log("after goto")
+        logMsg("after goto")
 
         let $ = cheerio.load(await page.evaluate(() => document.body.innerHTML));
-        console.log("body loaded");
+        logMsg("body loaded");
 
         const commentsCountSelector = '#app > div:nth-child(5) > div > section > div.product-feedbacks__main > div.product-feedbacks__header.hide-mobile > h1 > span';
         const ratingSelector = '#app > div:nth-child(5) > div > section > div.product-feedbacks__side > div > div.rating-product__header > div > b';
@@ -194,7 +203,7 @@ app.get('/wb/rating/:sku', async function (req, res) {
             if (isPrevDayReached)
                 break;
 
-            console.log("scrolling");
+            logMsg("scrolling");
             await page.evaluate(async () => {
                 window.scrollBy(0, 5000);
             });
@@ -205,7 +214,7 @@ app.get('/wb/rating/:sku', async function (req, res) {
             $ = cheerio.load(await page.evaluate(() => document.body.innerHTML));
 
             if ($(`div.feedback__info`).length === feedbacksCount && retries--) {
-                console.log("rescroll");
+                logMsg("rescroll");
                 continue;
             }
 
@@ -220,9 +229,9 @@ app.get('/wb/rating/:sku', async function (req, res) {
         })*/
 
         res.send(JSON.stringify(data));
-        console.log("response sent");
+        logMsg("response sent");
     } catch (e) {
-        console.log(e.message);
+        logMsg(e.message);
         res.send("Something went wrong");
     }
 
@@ -250,9 +259,11 @@ async function autoScroll(page) {
 
 
 app.get("/ozon", async function (req, res) {
-    console.log(req.query);
+    logMsg(`GET ${req.url}`);
+    logMsg(req.query);
+
     if (req.query.sku) {
-        console.log(req.query.sku);
+        logMsg(req.query.sku);
         let url = `https://ozon.ru/context/detail/id/${req.query.sku}`;
 
         const browser = await puppeteer.launch({
@@ -260,7 +271,7 @@ app.get("/ozon", async function (req, res) {
             defaultViewport: null,
             args: ['--no-sandbox', '--disable-setuid-sandbox']
         });
-        console.log("браузер запущен");
+        logMsg("браузер запущен");
         try {
             /*,
                     '--disable-web-security',
@@ -275,11 +286,11 @@ app.get("/ozon", async function (req, res) {
                 await page.setCookie(...deserializedCookies)
             }
 
-            console.log("страница создана");
+            logMsg("страница создана");
             await page.goto(url, {
                 waitUntil: 'domcontentloaded',
             });
-            console.log("после goto");
+            logMsg("после goto");
 
             try {
                 await page.waitForSelector('div#section-characteristics', {
@@ -291,9 +302,9 @@ app.get("/ozon", async function (req, res) {
                 return;
             }
 
-            console.log("после ожидания селектора");
+            logMsg("после ожидания селектора");
             let body = await page.evaluate(() => document.body.innerHTML);
-            console.log("после эвал");
+            logMsg("после эвал");
 
             const $ = cheerio.load(body);
 
@@ -304,7 +315,7 @@ app.get("/ozon", async function (req, res) {
                 }
             });
 
-            console.log(JSON.stringify(nodes));
+            logMsg(JSON.stringify(nodes));
 
             res.send(JSON.stringify(nodes));
 
@@ -313,13 +324,13 @@ app.get("/ozon", async function (req, res) {
 
             fs.writeFileSync('oz-cookies.json', cookieJson)
         } catch (e) {
-            console.log(e.message);
+            logMsg(e.message);
             res.send("Something went wrong");
         }
 
         await browser.close();
 
-        console.log('after result');
+        logMsg('after result');
     } else {
         res.send("Arguments is empty");
     }
@@ -328,49 +339,50 @@ app.get("/ozon", async function (req, res) {
 app.get("/ozon/rating", async function (req, res) {
     const commentsHref = '#layoutPage > div.a7 > div.container.b0 > div:nth-child(2) > div > div > div.x6m.x8m.xm9.my1 > div > div.x6m.xm9.my1 > div:nth-child(1) > div > div > div._4-a > a';
 
-    console.log(req.query);
+    logMsg(`GET ${req.url}`);
+    logMsg(req.query);
     if (req.query.sku) {
-        console.log(req.query.sku);
+        logMsg(req.query.sku);
         let url = `https://ozon.ru/context/detail/id/${req.query.sku}/?oos_search=false`;
 
         let browser = await newBrowserLaunch(!req.query.hl);
-        console.log("browser started");
+        logMsg("browser started");
 
         let page = (await browser.pages())[0];
         await configurePage(page);
-        console.log("page configured");
+        logMsg("page configured");
         //await loadCookies('oz-cookies.json', page);
         try {
 
-            console.log("going to url");
+            logMsg("going to url");
             await page.goto(url, {waitUntil: 'networkidle2'});
-            console.log("after goto")
+            logMsg("after goto")
 
             //await page.waitForTimeout(2000);
             await page.waitForSelector(commentsHref, {timeout: 5000});
-            console.log("after waitFor");
+            logMsg("after waitFor");
 
             let $ = cheerio.load(await page.evaluate(() => document.body.innerHTML));
-            console.log("body loaded");
+            logMsg("body loaded");
 
             let href = $(commentsHref).attr().href;
 
             // next page
 
-            console.log('restarting browser');
+            logMsg('restarting browser');
             await browser.close();
             browser = await newBrowserLaunch(!req.query.headless);
             page = (await browser.pages())[0];
             configurePage(page);
-            console.log('page configured');
+            logMsg('page configured');
             //await loadCookies('oz-cookies.json', page);
 
-            console.log('going to comments page');
+            logMsg('going to comments page');
             await page.goto(`https://ozon.ru${href}`, {waitUntil: 'networkidle2'});
-            console.log("after goto");
+            logMsg("after goto");
 
             $ = cheerio.load(await page.evaluate(() => document.body.innerHTML));
-            console.log("body выгружено");
+            logMsg("body выгружено");
 
             // parsing
 
@@ -408,14 +420,14 @@ app.get("/ozon/rating", async function (req, res) {
             const cookieJson = JSON.stringify(cookies)
             fs.writeFileSync('oz-cookies.json', cookieJson)
         } catch (e) {
-            console.log(e.message);
+            logMsg(e.message);
             //res.send("Something went wrong");
             res.send(await page.evaluate(() => document.body.innerHTML));
         }
 
         await browser.close();
 
-        console.log('after result');
+        logMsg('after result');
     } else {
         res.send("Arguments is empty");
     }
@@ -424,6 +436,7 @@ app.get("/ozon/rating", async function (req, res) {
 
 app.get('/mpstats/api/wb/get/item/:sku/sales', async function (req, res) {
     try {
+        logMsg(`GET ${req.url}`);
         const sku = req.params.sku;
         const d1 = req.query.d1;
         const d2 = req.query.d2;
@@ -436,21 +449,22 @@ app.get('/mpstats/api/wb/get/item/:sku/sales', async function (req, res) {
         })
         let result = await response.text();
 
-        console.log(`Response received`);
+        logMsg(`Response received`);
 
         res.send(result);
     } catch (e) {
-        console.log(e.message)
+        logMsg(e.message)
         res.send('Something went wrong');
     }
 });
 
 app.post('/mpstats/api-get/', jsonParser, async function (req, res) {
     try {
+        logMsg(`POST ${req.url}`);
         if (!req.body) return res.sendStatus(400)
 
-        console.log(JSON.stringify(req.body));
-        console.log(`https://mpstats.io/api/${req.body.url}`);
+        logMsg(JSON.stringify(req.body));
+        logMsg(`https://mpstats.io/api/${req.body.url}`);
 
         let response = await fetch(`https://mpstats.io/api/${req.body.url}`, {
             method: 'GET',
@@ -461,11 +475,11 @@ app.post('/mpstats/api-get/', jsonParser, async function (req, res) {
         });
 
         let result = await response.text();
-        console.log(`Response sent`);
+        logMsg(`Response sent`);
 
         res.send(result);
     } catch (e) {
-        console.log(e.message)
+        logMsg(e.message)
         res.send('Something went wrong');
     }
 
@@ -473,9 +487,8 @@ app.post('/mpstats/api-get/', jsonParser, async function (req, res) {
 
 app.post('/mpstats/api-get/keywords-multiple', jsonParser, async function (req, res) {
     try {
+        logMsg(`POST ${req.url}`);
         if (!req.body) return res.sendStatus(400)
-
-        console.log('Keywords multiple')
 
         let requests = req.body.skus.map(sku =>
             fetch(`https://mpstats.io/api/${req.body.mp}/get/item/${sku}/by_keywords?d1=${req.body.d1}&d2=${req.body.d2}&full=true`, {
@@ -485,7 +498,7 @@ app.post('/mpstats/api-get/keywords-multiple', jsonParser, async function (req, 
                     'X-Mpstats-TOKEN': '62e010f690d6f6.72414271c10c7a6b8873f0b809951a51ebf31e69'
                 }
             }));
-        console.log("await fetch");
+        logMsg("await fetch");
         let responses = await Promise.all(requests);
         let errors = responses.filter((response) => !response.ok);
 
@@ -495,7 +508,7 @@ app.post('/mpstats/api-get/keywords-multiple', jsonParser, async function (req, 
 
         let json = responses.map((response) => response.json());
 
-        console.log("await json");
+        logMsg("await json");
         let data = await Promise.all(json);
 
         /*let stream = jsonStream.stringify();
@@ -512,9 +525,9 @@ app.post('/mpstats/api-get/keywords-multiple', jsonParser, async function (req, 
         res.send(JSON.stringify(data.map(v => {
             return {words: v.words};
         })));
-        console.log(`Response sent`);
+        logMsg(`Response sent`);
     } catch (e) {
-        console.log(e.message)
+        logMsg(e.message)
         res.send('Something went wrong');
     }
 });
@@ -522,10 +535,11 @@ app.post('/mpstats/api-get/keywords-multiple', jsonParser, async function (req, 
 
 app.post('/mpstats/api/', jsonParser, async function (req, res) {
     try {
+        logMsg(`POST ${req.url}`);
         if (!req.body) return res.sendStatus(400)
 
-        console.log(JSON.stringify(req.body));
-        console.log(`https://mpstats.io/api/${req.body.url}`);
+        logMsg(JSON.stringify(req.body));
+        logMsg(`https://mpstats.io/api/${req.body.url}`);
 
         let response = await fetch(`https://mpstats.io/api/${req.body.url}`, {
             method: 'POST',
@@ -537,25 +551,26 @@ app.post('/mpstats/api/', jsonParser, async function (req, res) {
         });
 
         let result = await response.text();
-        console.log(`Response sent`);
+        logMsg(`Response sent`);
 
         res.send(result);
     } catch (e) {
-        console.log(e.message)
+        logMsg(e.message)
         res.send('Something went wrong');
     }
 });
 
 app.post('/fetch', jsonParser,  async function (req, res) {
     try {
+        logMsg("POST " + req.url);
         if (!req.body) return res.sendStatus(400)
 
-        console.log(JSON.stringify(req.body));
-        console.log(req.body.url);
+        logMsg(JSON.stringify(req.body));
+        logMsg(`https://mpstats.io/api/${req.body.url}`);
 
         let init = {
             method: req.body.method,
-            headers: req.body.headers,
+            headers: req.body.headers
         }
 
         if(req.body.method?.toString().toLowerCase() !== "get") {
@@ -565,17 +580,18 @@ app.post('/fetch', jsonParser,  async function (req, res) {
         let response = await fetch(req.body.url, init);
 
         let result = await response.text();
+        logMsg(`Response by fetching ${req.body.url} sent`);
 
-        console.log(`Response by fetching ${req.body.url} sent`);
         res.send(result);
     } catch (e) {
-        console.log(e.message)
+        logMsg(e.message)
         res.send('Something went wrong');
     }
 });
 
 app.get("/mpstats/wb/keywords/:sku", async function (req, res) {
 
+    logMsg(`GET ${req.url}`);
     let url = `https://mpstats.io/wb/keywords/${req.params.sku}`;
 
     if (req.query.d1 && req.query.d2) {
@@ -603,19 +619,19 @@ app.get("/mpstats/wb/keywords/:sku", async function (req, res) {
     });
 
     if (fs.existsSync(mpstatsCookies)) {
-        console.log("Loading cookies");
+        logMsg("Loading cookies");
         let cookies = fs.readFileSync(mpstatsCookies, 'utf8');
         const deserializedCookies = JSON.parse(cookies);
         await page.setCookie(...deserializedCookies);
     }
 
     try {
-        console.log(`Going to url ${url}`);
+        logMsg(`Going to url ${url}`);
         await page.goto(url, {
             waitUntil: 'networkidle2',
         });
 
-        console.log("Evaluating first..");
+        logMsg("Evaluating first..");
         let body = await page.evaluate(() => document.body.innerHTML);
         let $ = cheerio.load(body);
 
@@ -625,28 +641,28 @@ app.get("/mpstats/wb/keywords/:sku", async function (req, res) {
             $('div[class="message"]:contains("Текущая сессия была завершена")').length) {
 
             if (await logginMpstats(page, body, $)) {
-                console.log("Logging success! Saving cookies");
+                logMsg("Logging success! Saving cookies");
                 const cookies = await page.cookies()
                 const cookieJson = JSON.stringify(cookies)
                 fs.writeFileSync(mpstatsCookies, cookieJson)
             } else {
-                console.log("Logging failed");
+                logMsg("Logging failed");
                 res.send("Can't logging");
                 await browser.close();
                 return;
             }
 
-            console.log("Going to card url..");
+            logMsg("Going to card url..");
             await page.goto(url, {
                 waitUntil: 'networkidle2',
             });
 
-            console.log("Evaluating card page..");
+            logMsg("Evaluating card page..");
             body = await page.evaluate(() => document.body.innerHTML);
             $ = cheerio.load(body);
         }
 
-        console.log("before parsing");
+        logMsg("before parsing");
         if (!$(`header:contains("Xlsx формат") + ul > li > button`).length) {
             throw "Can't find button";
         }
@@ -679,8 +695,8 @@ app.get("/mpstats/wb/keywords/:sku", async function (req, res) {
         }
         clearTimeout(timeHandler);
 
-        console.log("downloaded");
-        console.log(downloadPath);
+        logMsg("downloaded");
+        logMsg(downloadPath);
 
         const options = {root: downloadPath};
 
@@ -688,25 +704,26 @@ app.get("/mpstats/wb/keywords/:sku", async function (req, res) {
             if (err) {
                 throw err.message;
             } else {
-                console.log('Sent:', files[0]);
+                logMsg('Sent:', files[0]);
             }
         });
 
     } catch (e) {
-        console.log(e.message)
+        logMsg(e.message)
         res.send(e.message);
     }
 
     await browser.close();
-    console.log('Browser closed');
+    logMsg('Browser closed');
 });
 
 app.get('/mpstats', async function (req, res) {
 
-    console.log(req.query)
+    logMsg(`GET ${req.url}`);
+    logMsg(req.query)
 
     if (req.query.sku) {
-        console.log(req.query.sku)
+        logMsg(req.query.sku)
 
         let url = `https://mpstats.io/wb/item/${encodeURIComponent(req.query.sku.toString())}`;
 
@@ -734,80 +751,80 @@ app.get('/mpstats', async function (req, res) {
             });
 
             if (fs.existsSync(mpstatsCookies)) {
-                console.log("Loading cookies");
+                logMsg("Loading cookies");
                 let cookies = fs.readFileSync(mpstatsCookies, 'utf8');
                 const deserializedCookies = JSON.parse(cookies);
                 await page.setCookie(...deserializedCookies);
             }
 
-            console.log(`Going to url ${url}`);
+            logMsg(`Going to url ${url}`);
             await page.goto(url, {
                 waitUntil: 'domcontentloaded',
             });
 
-            console.log("Wait");
+            logMsg("Wait");
             await sleep(3000);
-            console.log("Wait done");
+            logMsg("Wait done");
 
-            console.log("Evaluating first..");
+            logMsg("Evaluating first..");
             let body = await page.evaluate(() => document.body.innerHTML);
             let $ = cheerio.load(body);
 
             if ($('div.be-error').length || $('a.error-go-tariff-button').length) {
                 if (await logginMpstats(page, body, $)) {
-                    console.log("Logging success! Saving cookies");
+                    logMsg("Logging success! Saving cookies");
                     const cookies = await page.cookies()
                     const cookieJson = JSON.stringify(cookies)
                     fs.writeFileSync(mpstatsCookies, cookieJson)
                 } else {
-                    console.log("Logging failed");
+                    logMsg("Logging failed");
                     res.send("Can't logging");
                     await browser.close();
                     return;
                 }
 
-                console.log("Going to card url..");
+                logMsg("Going to card url..");
                 await page.goto(url, {
                     waitUntil: 'domcontentloaded',
                 });
 
-                console.log("Wait");
+                logMsg("Wait");
                 await sleep(3000);
-                console.log("Wait done");
+                logMsg("Wait done");
 
-                console.log("Evaluating card page..");
+                logMsg("Evaluating card page..");
                 body = await page.evaluate(() => document.body.innerHTML);
                 $ = cheerio.load(body);
             }
 
             if ($('div[class="message"]:contains("Текущая сессия была завершена")').length) {
-                console.log('Double session Detected')
+                logMsg('Double session Detected')
 
                 if (await logginMpstats(page, body, $)) {
-                    console.log("Logging success! Saving cookies");
+                    logMsg("Logging success! Saving cookies");
                     const cookies = await page.cookies()
                     const cookieJson = JSON.stringify(cookies)
                     fs.writeFileSync(mpstatsCookies, cookieJson)
                 } else {
-                    console.log("Logging failed");
+                    logMsg("Logging failed");
                     res.send("Can't logging");
                     if (browser)
                         await browser.close();
                     return;
                 }
 
-                console.log("Going to card url..");
+                logMsg("Going to card url..");
                 await page.goto(url, {
                     waitUntil: 'domcontentloaded',
                 });
 
-                console.log("Evaluating card page..");
+                logMsg("Evaluating card page..");
                 body = await page.evaluate(() => document.body.innerHTML);
                 $ = cheerio.load(body);
             }
 
             if ($('div:contains("Мы не смогли найти товар по такому идентификатору")').length) {
-                console.log('Sku not find');
+                logMsg('Sku not find');
                 res.send('wrong sku');
                 if (browser)
                     await browser.close();
@@ -815,12 +832,12 @@ app.get('/mpstats', async function (req, res) {
             }
 
             if (!$('div.card').length) {
-                console.log('Something went wrong (no div.card)')
+                logMsg('Something went wrong (no div.card)')
                 res.send('Something went wrong');
                 //res.send($.html());
                 if (browser)
                     await browser.close();
-                console.log('Browser closed');
+                logMsg('Browser closed');
                 return;
             }
 
@@ -828,16 +845,16 @@ app.get('/mpstats', async function (req, res) {
             let result = JSON.stringify(data);
 
             //res.send($.html());
-            console.log(result);
+            logMsg(result);
             res.send(result);
 
         } catch (e) {
-            console.log(e.message)
+            logMsg(e.message)
             res.send('Something went wrong');
         }
 
         await browser.close();
-        console.log('Browser closed');
+        logMsg('Browser closed');
     } else {
         res.send("Empty query");
     }
@@ -847,12 +864,12 @@ app.get("/clearmp", function (req, res) {
     if (fs.existsSync(mpstatsCookies)) {
         fs.unlinkSync(mpstatsCookies);
     }
-    console.log("Mpstat cookies cleared");
+    logMsg("Mpstat cookies cleared");
     res.send("Mpstat cookies cleared");
 });
 
 async function logginMpstats(page, body, $) {
-    console.log("Going to login page");
+    logMsg("Going to login page");
     await page.goto("https://mpstats.io/login", {
         waitUntil: 'domcontentloaded',
     });
@@ -861,10 +878,10 @@ async function logginMpstats(page, body, $) {
     await page.type("input[type=password]", "sewerrat32167");
     await page.click("form>button.btn");
 
-    console.log("Sign in try..");
+    logMsg("Sign in try..");
     await page.waitForNavigation();
 
-    console.log("Evaluating after loging..");
+    logMsg("Evaluating after loging..");
     body = await page.evaluate(() => document.body.innerHTML);
     $ = cheerio.load(body);
 
@@ -872,6 +889,7 @@ async function logginMpstats(page, body, $) {
 }
 
 function parseMpstats($) {
+    logMsg("Parse Mpstats");
     let data = {};
 
     let subjHref = $(`a[title="Отчет по предмету"]`).attr().href;
@@ -891,7 +909,7 @@ function parseMpstats($) {
 
     // Логистика
     data.logistic = $(`div:contains("Базовая логистика") + div > span:first`).text()
-
+    logMsg("End parsing");
     return data;
 }
 
@@ -899,6 +917,12 @@ function sleep(ms) {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
     });
+}
+
+function logMsg(msg) {
+    let logMsg = `[${new Date().toISOString()}]: ` + msg
+    console.log(logMsg);
+    processLogStream.write(`${logMsg}\n`);
 }
 
 
@@ -911,7 +935,7 @@ function clearDownloads() {
     const files = fs.readdirSync(downloadPath);
     for (const file of files) {
         fs.unlinkSync(path.join(downloadPath, file));
-        console.log(`deleted ${file}`)
+        logMsg(`deleted ${file}`)
     }
 }
 
@@ -945,6 +969,6 @@ async function loadCookies(filename, page) {
 }
 
 app.listen(port, function () {
-    console.log('App listening on port ' + port)
+    logMsg('App listening on port ' + port)
 })
 
